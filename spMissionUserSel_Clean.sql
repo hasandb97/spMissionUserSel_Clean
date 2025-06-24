@@ -74,7 +74,7 @@ FROM #myFormWork GROUP BY EmpIdRef, YesterDay, FormDate, Tomorrow  , Dsc , MisCo
 
 SELECT  EmpIdRef, YesterDay, distance as maxDistance, FormDate, 
 Tomorrow , EndTimeMax , STimeMin , PostFrom , PostTo, Dsc , prjCode , FromPost , ToPost , 0 as IsMission  , MisCode , 1.0 as SumMission
-into #DistanceTbl FROM AggregatedData ORDER BY FormDate;
+into #DistanceTbl FROM AggregatedData where FormDate > @StartDate ORDER BY FormDate;
 
 update #DistanceTbl set IsMission = 1 where maxDistance >= 50
 
@@ -174,6 +174,7 @@ insert into #DistanceTbl (EmpIdRef , maxDistance , YesterDay , FormDate , Tomorr
 --select * from #YesterDayTbl
 --select * from #TomorrowTbl
 
+--select * from #DistanceTbl
 
 -- update MisCode in #myFormWork
 update #DistanceTbl set MisCode = (case when maxDistance >= 50 and maxDistance < 140 then 1  when maxDistance >= 140 and maxDistance<300 then 2 when maxDistance>=300 then 4 else 0 end);
@@ -200,7 +201,7 @@ select
  p.Family,
  d.SumMission as MTime,
  d.prjCode ,
- d.FormDate as SDate,
+ d.FormDate  as SDate,
  d.FormDate as EDate, 
  u.Id as UserId,
  '' as MTimeDesc,
@@ -210,8 +211,9 @@ select
  2 as Vehicle2,
  '' as MissionSubj,
  '' as MissionReport,
- d.STimeMin as TimeIn,
- d.EndTimeMax as TimeOut,
+ convert(varchar(5) , d.STimeMin) as TimeIn,
+
+ convert(varchar(5) , d.EndTimeMax)as TimeOut,
  0 as Year , 
  0 as Mnt , 
  0 as AppDate ,
@@ -252,6 +254,52 @@ on i.CompanyId = c.Id
 LEFT JOIN  #m as m 
 ON d.EmpIdRef=m.Srl_Pm_Ashkhas  AND d.FormDate COLLATE SQL_Latin1_General_CP1256_CI_AS = m.WorkFormTarikh COLLATE SQL_Latin1_General_CP1256_CI_AS
 
-order by d.FormDate
+
+UNION ALL 
+
+
+SELECT  M.Id,
+M.EmpIdRef,
+e.TfIdRef, 
+e.Name,
+e.Family,
+M.MTime, 
+M.PrjCode, 
+M.SDate ,
+M.EDate ,
+ M.Userid,
+ M.MTimeDesc,
+        CASE WHEN M.Vehicle1=0 THEN 'شخصي' ELSE 'شرکتي' END Vehicle1Title,
+        CASE WHEN M.Vehicle2=0 THEN 'شخصي' ELSE 'شرکتي' END Vehicle2Title,   
+		M.Vehicle1,
+		M.Vehicle2  ,
+        M.MissionSubj, M.MissionReport, M.TimeIn, M.[TimeOut],
+		isnull(m.[Year] , 0) as Year  ,
+        ISNULL(m.Mnt , 0) as Mnt ,
+		CAST(m.[Year] AS VARCHAR(10))+'/'+CAST(m.Mnt AS VARCHAR(10))  AS AppDate ,
+            M.KDate, M.KUser, ISNULL(u.Title , '')  AS GpName ,
+  m.approve ,e.CompanyId,c.Name AS CompanyName  ,
+ M.CostPrice,
+ CAST( 0 AS BIGINT) AS LunchPrice ,
+ M.MisCode  ,
+    CASE WHEN M.MisCode=3  THEN 'خارج استان خراسان بزرگ'   
+		 WHEN M.MisCode=4  THEN 'خراسان جنوبی و شمالی'   
+		 ELSE 'داخل استان'
+	END      MisCodeTitle ,
+    CASE WHEN m.miscode= 1 THEN p.MisPrice1 
+		 WHEN m.miscode= 2 THEN p.MisPrice2
+		 WHEN m.miscode= 3 THEN p.MisPrice3 
+		 WHEN m.miscode= 4 THEN p.MisPrice4 
+    END       AS PerPrice , m.City, m.[State] ,c3.CName+ '-' +  c2.CName   AS MisPlace ,0 AS Distance 
+  FROM per.Mission m 
+  JOIN per.Employee e ON m.EmpIdRef=e.Id LEFT JOIN
+  per.PerInfo p   ON p.EmpIdRef =m.EmpIdRef
+  LEFT JOIN per.MissionRatePrice mrp  ON m.EmpIdRef=mrp.EmpIdRef 
+  LEFT JOIN pcs.PerCompany c ON c.Id=e.CompanyId
+  LEFT JOIN  per.units u ON  u.Id =p.UnitId  LEFT JOIN 
+  cnt.City c2  ON c2.CId = m.city  LEFT JOIN 
+  cnt.City c3  ON c3.CId = m.[State]
+WHERE (e.Id=@EmpIdRef OR @EmpIdRef=-1)  AND (c.Id=@CompanyId OR @CompanyId=-1) and (m.SDate between @StartDate and @EndDate)
+order by EmpIdRef , SDate
 
 
