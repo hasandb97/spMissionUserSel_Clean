@@ -5,7 +5,8 @@ SET ANSI_NULLS ON
 GO
 SET QUOTED_IDENTIFIER ON
 GO
-ALTER procedure [dbo].[spMissionUserSel_Clean] @EmpIdRef INT,
+
+ALTER procedure [per].[spMissionUserSel] @EmpIdRef INT,
 @StartDate VARCHAR(10)='',
 @EndDate VARCHAR(10)=''  ,@CompanyId INT =-1 
 As
@@ -59,26 +60,52 @@ order by WorkFormTarikh
 -- بدست آوردن روزهایی که فرم کار پر کرده به همراه ماکس فاصله و مین ساعت شروع و تاریخ فردا و دیروز
 ;WITH AggregatedData AS
 (
-SELECT EmpIdRef, YesterDay, MAX(Distance) AS distance, FormDate, Tomorrow,
-max(CAST(replace(EndTime, ':','') as int)) as EndTimeMax ,
-min( CAST(replace(REPLACE(STime , ':','') , '/','') as int)) as STimeMin  ,
-Dsc,
-max(PostFrom) as PostFrom ,
-max(PostTo) as PostTo,
-MAX(prjCode)as prjCode,
-max(FromPost) as FromPost , 
-MAX(ToPost) as ToPost,
-MisCode
+    SELECT 
+        EmpIdRef, 
+        FormDate,
+        MAX(Distance) AS MaxDistance,
+        MIN(Distance) AS MinDistance,
+        MAX(CAST(REPLACE(EndTime, ':','') AS INT)) AS EndTimeMax,
+        MIN(CAST(REPLACE(STime, ':','') AS INT)) AS STimeMin,
+        MAX(YesterDay) AS YesterDay,  -- Optional: pick latest or earliest depending on logic
+        MAX(Tomorrow) AS Tomorrow,
+        MAX(Dsc) AS Dsc,
+        MAX(PostFrom) AS PostFrom,
+        MAX(PostTo) AS PostTo,
+        MAX(prjCode) AS prjCode,
+        MAX(FromPost) AS FromPost,
+        MAX(ToPost) AS ToPost,
+        MAX(MisCode) AS MisCode
 
-FROM #myFormWork GROUP BY EmpIdRef, YesterDay, FormDate, Tomorrow  , Dsc , MisCode)
+    FROM #myFormWork 
+    WHERE FormDate > @StartDate
+    GROUP BY EmpIdRef, FormDate
+)
 
-SELECT  EmpIdRef, YesterDay, distance as maxDistance, FormDate, 
-Tomorrow , EndTimeMax , STimeMin , PostFrom , PostTo, Dsc , prjCode , FromPost , ToPost , 0 as IsMission  , MisCode , 1.0 as SumMission
-into #DistanceTbl FROM AggregatedData where FormDate > @StartDate ORDER BY FormDate;
+SELECT  
+    EmpIdRef,
+    FormDate,
+    YesterDay,
+    Tomorrow,
+    MaxDistance,
+    MinDistance,
+    EndTimeMax,
+    STimeMin,
+    PostFrom,
+    PostTo,
+    Dsc,
+    prjCode,
+    FromPost,
+    ToPost,
+    0 AS IsMission,
+    MisCode,
+    1.0 AS SumMission
+INTO #DistanceTbl
+FROM AggregatedData
+ORDER BY FormDate;
 
 update #DistanceTbl set IsMission = 1 where maxDistance >= 50
-
-
+delete from #DistanceTbl where MaxDistance <49
 
 
 -- ایجاد جدول بدست امده برای روزهای بعداز فرم کار 
@@ -159,6 +186,13 @@ delete from #YesterDayTbl where FormDate in (select FormDate from #integrateMPer
 delete from #TomorrowTbl where FormDate in (select FormDate from #integrateMPerDay)
 
 
+--select * from #DistanceTbl
+--select * from #integrateMPerDay
+--select * from #YesterDayTbl
+--select * from #TomorrowTbl
+
+
+
 --  پس ما الان اشتراکات را در جدول های روز بعد و روز قبل حذف کردیم
 
 
@@ -170,15 +204,12 @@ insert into #DistanceTbl (EmpIdRef , maxDistance , YesterDay , FormDate , Tomorr
 
 
 
---select * from #integrateMPerDay
---select * from #YesterDayTbl
---select * from #TomorrowTbl
+
 
 --select * from #DistanceTbl
 
 -- update MisCode in #myFormWork
 update #DistanceTbl set MisCode = (case when maxDistance >= 50 and maxDistance < 140 then 1  when maxDistance >= 140 and maxDistance<300 then 2 when maxDistance>=300 then 4 else 0 end);
-
 
 
 SELECT DISTINCT   Srl_Pm_Ashkhas,WorkFormTarikh ,pf.ostan AS FOstan , pf.Ostan,pt.ostan  AS TOstan, CAST('' AS VARCHAR(200) ) PostFrom,CAST('' AS VARCHAR(200) ) PostTo  INTO #m  
@@ -253,7 +284,7 @@ left join per.PerCompany as c
 on i.CompanyId = c.Id
 LEFT JOIN  #m as m 
 ON d.EmpIdRef=m.Srl_Pm_Ashkhas  AND d.FormDate COLLATE SQL_Latin1_General_CP1256_CI_AS = m.WorkFormTarikh COLLATE SQL_Latin1_General_CP1256_CI_AS
-
+where p.Id is not null
 
 UNION ALL 
 
@@ -299,7 +330,9 @@ M.EDate ,
   LEFT JOIN  per.units u ON  u.Id =p.UnitId  LEFT JOIN 
   cnt.City c2  ON c2.CId = m.city  LEFT JOIN 
   cnt.City c3  ON c3.CId = m.[State]
-WHERE (e.Id=@EmpIdRef OR @EmpIdRef=-1)  AND (c.Id=@CompanyId OR @CompanyId=-1) and (m.SDate between @StartDate and @EndDate)
-order by EmpIdRef , SDate
+WHERE (e.Id=@EmpIdRef OR @EmpIdRef=-1)  AND (c.Id=@CompanyId OR @CompanyId=-1) and (m.SDate between @StartDate and @EndDate) 
+order by EmpIdRef , SDate 
+
+
 
 
