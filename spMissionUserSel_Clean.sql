@@ -1,6 +1,6 @@
 USE [Fanavaran221-TestAnsari]
 GO
-/****** Object:  StoredProcedure [dbo].[spMissionUserSel_Clean]    Script Date: 6/23/2025 8:11:13 AM ******/
+/****** Object:  StoredProcedure [dbo].[spMissionUserSel_Clean]    Script Date: 6/24/2025 8:53:32 AM ******/
 SET ANSI_NULLS ON
 GO
 SET QUOTED_IDENTIFIER ON
@@ -34,18 +34,17 @@ create table #myFormWork(
 	YesterDay varchar(10),
 	FromPost  varchar(40),
 	ToPost  varchar(40),
-	HarkatHamanRoz bit,
 	Mission int,
 	IsMission bit,
 	MisCode tinyint
 )
-insert into   #myFormWork(Id , EmpIdRef , Stime , EndTime , EzafeKAr , Dsc , FormDate , Distance , prjCode , FromPost , ToPost  , HarkatHamanRoz, Tomorrow , YesterDay , Mission , IsMission , PostFrom , PostTo)
+insert into   #myFormWork(Id , EmpIdRef , Stime , EndTime , EzafeKAr , Dsc , FormDate , Distance , prjCode , FromPost , ToPost  , Tomorrow , YesterDay , Mission , IsMission , PostFrom , PostTo)
 select  w.Srl , w.Srl_Pm_Ashkhas  
 ,CASE WHEN LEN(RIGHT(BeginWorkSat, CHARINDEX(':', REVERSE(BeginWorkSat)) - 1)) = 1 THEN LEFT(BeginWorkSat, CHARINDEX(':', BeginWorkSat)) + '0' + RIGHT(BeginWorkSat, CHARINDEX(':', REVERSE(BeginWorkSat)) - 1) ELSE BeginWorkSat END AS BeginWorkSat
 ,CASE WHEN LEN(RIGHT(EndWorkSat, CHARINDEX(':', REVERSE(EndWorkSat)) - 1)) = 1 THEN LEFT(EndWorkSat, CHARINDEX(':', EndWorkSat)) + '0' + RIGHT(EndWorkSat, CHARINDEX(':', REVERSE(EndWorkSat)) - 1) ELSE EndWorkSat END AS EndWorkSat
 ,CASE WHEN LEN(RIGHT(EzafeKAr, CHARINDEX(':', REVERSE(EzafeKAr)) - 1)) = 1 THEN LEFT(EzafeKAr, CHARINDEX(':', EzafeKAr)) + '0' + RIGHT(EzafeKAr, CHARINDEX(':', REVERSE(EzafeKAr)) - 1) ELSE EzafeKAr END AS EzafeKAr
 , w.WorkFormDis    , w.WorkFormTarikh  , d.Distance , w.Srl_HazineCode   
- , p.Name as FromPost , p2.Name as ToPost ,w.HarkatHamanRoz as HarkatHamanRoz ,   (select [per].[CalcTomorrowShamsi](w.WorkFormTarikh)) as Tomorrow ,(select [per].[CalcYesterdayShamsi](w.WorkFormTarikh)) as YesterDay , 1 , case when d.distance >= 50 then 1 else 0 end,
+ , p.Name as FromPost , p2.Name as ToPost ,   (select [per].[CalcTomorrowShamsi](w.WorkFormTarikh)) as Tomorrow ,(select [per].[CalcYesterdayShamsi](w.WorkFormTarikh)) as YesterDay , 1 , case when d.distance >= 50 then 1 else 0 end,
  w.Srl_Pm_Post_From , w.Srl_Pm_Post_To
 from per.WorkForm as w
 join per.pm_Distance as d
@@ -61,8 +60,6 @@ order by WorkFormTarikh
 ;WITH AggregatedData AS
 (
 SELECT EmpIdRef, YesterDay, MAX(Distance) AS distance, FormDate, Tomorrow,
-SUM( ISNULL( CAST(SUBSTRING(ezafekar, 0, CHARINDEX(':', ezafekar)) AS INT) * 60 + CAST(SUBSTRING(ezafekar, CHARINDEX(':', ezafekar) + 1, LEN(ezafekar)) AS INT), 0) ) AS SumEzafe_FormWork,
-MAX(CAST(HarkatHamanRoz AS TINYINT)) AS HarkatHamanRoz,
 max(CAST(replace(EndTime, ':','') as int)) as EndTimeMax ,
 min( CAST(replace(REPLACE(STime , ':','') , '/','') as int)) as STimeMin  ,
 Dsc,
@@ -76,7 +73,7 @@ MisCode
 FROM #myFormWork GROUP BY EmpIdRef, YesterDay, FormDate, Tomorrow  , Dsc , MisCode)
 
 SELECT  EmpIdRef, YesterDay, distance as maxDistance, FormDate, 
-Tomorrow, SumEzafe_FormWork, HarkatHamanRoz , EndTimeMax , STimeMin , PostFrom , PostTo, Dsc , prjCode , FromPost , ToPost , 1 as HasFormWork , 0 as IsMission  , MisCode
+Tomorrow , EndTimeMax , STimeMin , PostFrom , PostTo, Dsc , prjCode , FromPost , ToPost , 0 as IsMission  , MisCode , 1.0 as SumMission
 into #DistanceTbl FROM AggregatedData ORDER BY FormDate;
 
 update #DistanceTbl set IsMission = 1 where maxDistance >= 50
@@ -92,8 +89,6 @@ select
 	dt.FormDate as YesterDay , 
 	dt.Tomorrow as FormDate , 
 	(select per.CalcTomorrowShamsi(dt.Tomorrow)) as Tomorrow , 
-	dt.SumEzafe_FormWork , 
-	dt.HarkatHamanRoz,
 	dt.EndTimeMax , 
 	dt.STimeMin , 
 	dt.PostFrom , 
@@ -102,13 +97,9 @@ select
 	dt.PrjCode , 
 	dt.FromPost , 
 	dt.ToPost , 
-	dt.HasFormWork , 
 	dt.IsMission , 
 	dt.MisCode , 
 
-case when (maxDistance >= @maxDistance) then 1
-	 when EndTimeMax >= 1600 and maxDistance>=140 then 1
-	 else 0 end as CanBackToday,
 case when dt.maxDistance>=@maxDistance and ad.ArrivedDate is not null and ad.ArrivedDate<> @toDate then 1 
 	when (dt.maxDistance>=140 and dt.maxDistance<@maxDistance and ad.ArrivedDate is not null and ad.ArrivedDate<> @toDate) then 0.5 else 0 end as TMission  into #TomorrowTbl
 from  #DistanceTbl as dt
@@ -118,8 +109,8 @@ on ad.ArrivedDate=dt.Tomorrow and ad.EmpIdRef = dt.EmpIdRef
 delete from #TomorrowTbl where TMission <= 0
 
 
-select   dt.EmpIdRef ,  dt.maxDistance , (select per.CalcYesterdayShamsi(dt.YesterDay) ) as YesterDay , dt.YesterDay as FormDate , dt.SumEzafe_FormWork  , dt.FormDate as Tomorrow  , dt.EndTimeMax , dt.STimeMin, dt.PostFrom , dt.PostTo, dt.Dsc , dt.PrjCode , dt.FromPost , dt.ToPost , 
-case when dt.HarkatHamanRoz = 0 then 1 else 0 end as OnDestination , dt.MisCode , dt.IsMission  , 0.5 as YMission   into #YesterDayTbl
+select   dt.EmpIdRef ,  dt.maxDistance , (select per.CalcYesterdayShamsi(dt.YesterDay) ) as YesterDay , dt.YesterDay as FormDate   , dt.FormDate as Tomorrow  , dt.EndTimeMax , dt.STimeMin, dt.PostFrom , dt.PostTo, dt.Dsc , dt.PrjCode , dt.FromPost , dt.ToPost , 
+  dt.IsMission ,dt.MisCode   , 0.5 as YMission   into #YesterDayTbl
 from  #DistanceTbl as dt
 left join (select * from #DistanceTbl where maxDistance >=50) as dt2
 on dt.EmpIdRef = dt2.EmpIdRef and dt.YesterDay = dt2.FormDate
@@ -132,9 +123,6 @@ where dt2.FormDate is null and  dt.STimeMin<=800 and dt.maxDistance>=140 and dt.
 
 delete from #TomorrowTbl where TMission <= 0
 
-
--- update MisCode in #myFormWork
-update #DistanceTbl set MisCode = (case when maxDistance >= 50 and maxDistance < 140 then 1  when maxDistance >= 140 and maxDistance<300 then 2 when maxDistance>=300 then 4 else 0 end);
 
 
 -- برای روز های پاداش به بعد و قبل، باید ببینیم اگر در یک روز مشخص، هم پاداش روز قبل دارد هم پاداش روز بعد،م
@@ -155,9 +143,8 @@ case when y.maxDistance > t.maxDistance then y.Dsc else t.Dsc end as Dsc,
 case when y.maxDistance > t.maxDistance then y.prjCode else t.prjCode end as prjCode,
 case when y.maxDistance > t.maxDistance then y.FromPost else t.FromPost end as FromPost,
 case when y.maxDistance > t.maxDistance then y.ToPost else t.ToPost end as ToPost,
-t.HasFormWork , 
-t.MisCode ,
 1 as IsMission,
+t.MisCode ,
 case when (t.TMission + y.YMission) >= 1 then 1 else (t.TMission + y.YMission) end as TMission
 into #integrateMPerDay
 from #YesterDayTbl as y
@@ -172,17 +159,99 @@ delete from #YesterDayTbl where FormDate in (select FormDate from #integrateMPer
 delete from #TomorrowTbl where FormDate in (select FormDate from #integrateMPerDay)
 
 
---  پس ما الان اشتارکات را در جدول های روز بعد و روز قبل حذف کردیم
+--  پس ما الان اشتراکات را در جدول های روز بعد و روز قبل حذف کردیم
 
 
 --الان باید دیتاهای هر سه جدول یعنی جدول دیروز و فردا و اشتراکات را داخل جدول اصلی مان اینسرت کنیم
 
-insert into #DistanceTbl (EmpIdRef , YesterDay , maxDistance , FormDate , Tomorrow , SumEzafe_FormWork , EndTimeMax , STimeMin ,PostFrom , PostTo , Dsc , prjCode , FromPost , ToPost , HasFormWork , IsMission , MisCode  )
+insert into #DistanceTbl (EmpIdRef , maxDistance , YesterDay , FormDate , Tomorrow , EndTimeMax , STimeMin , PostFrom , PostTo , Dsc , prjCode , FromPost , ToPost , IsMission , MisCode , SumMission ) select * from #integrateMPerDay
+insert into #DistanceTbl (EmpIdRef , maxDistance , YesterDay , FormDate , Tomorrow , EndTimeMax , STimeMin , PostFrom , PostTo , Dsc , prjCode , FromPost , ToPost , IsMission , MisCode , SumMission ) select * from #YesterDayTbl
+insert into #DistanceTbl (EmpIdRef , maxDistance , YesterDay , FormDate , Tomorrow , EndTimeMax , STimeMin , PostFrom , PostTo , Dsc , prjCode , FromPost , ToPost , IsMission , MisCode , SumMission ) select * from #TomorrowTbl
 
 
-select * from #integrateMPerDay
-select * from #YesterDayTbl
-select * from #TomorrowTbl
-select * from #DistanceTbl
+
+--select * from #integrateMPerDay
+--select * from #YesterDayTbl
+--select * from #TomorrowTbl
+
+
+-- update MisCode in #myFormWork
+update #DistanceTbl set MisCode = (case when maxDistance >= 50 and maxDistance < 140 then 1  when maxDistance >= 140 and maxDistance<300 then 2 when maxDistance>=300 then 4 else 0 end);
+
+
+
+SELECT DISTINCT   Srl_Pm_Ashkhas,WorkFormTarikh ,pf.ostan AS FOstan , pf.Ostan,pt.ostan  AS TOstan, CAST('' AS VARCHAR(200) ) PostFrom,CAST('' AS VARCHAR(200) ) PostTo  INTO #m  
+FROM per.WorkForm wf JOIN  
+  per.Pm_PostOstanDetailes as pf   on pf.Srl = wf.Srl_Pm_Post_from  JOIN   
+  per.Pm_PostOstanDetailes as pt   on pt.Srl = wf.Srl_Pm_Post_to
+WHERE wf.WorkFormTarikh   between @fromDate and @toDate  AND ( pt.Srl_Pm_Ostan IN (4,5)  OR pf.Srl_Pm_Ostan IN (4,5))    
+
+
+UPDATE m SET  postFrom =w.Srl_Pm_Post_From,PostTo=w.Srl_Pm_Post_To  FROM #m m 
+JOIN per.WorkForm w 
+ON w.WorkFormTarikh =m.WorkFormTarikh AND w.Srl_Pm_Ashkhas = m.Srl_Pm_Ashkhas
+
+
+select 
+ 0 as Id , 
+ p.Id as EmpIdRef,
+ p.PersonalCode as TfIdRef , 
+ p.Name , 
+ p.Family,
+ d.SumMission as MTime,
+ d.prjCode ,
+ d.FormDate as SDate,
+ d.FormDate as EDate, 
+ u.Id as UserId,
+ '' as MTimeDesc,
+ '' as Vehicle1Title ,
+ '' as Vehicle2Title,
+ 2 as Vehicle1,
+ 2 as Vehicle2,
+ '' as MissionSubj,
+ '' as MissionReport,
+ d.STimeMin as TimeIn,
+ d.EndTimeMax as TimeOut,
+ 0 as Year , 
+ 0 as Mnt , 
+ 0 as AppDate ,
+ 0 as KDate ,
+ 0 as KUser,
+ u.Title as GpName,
+ 1 as approve,
+ ISNULL(i.CompanyId , 8) as CompanyId,
+ c.Name as CompanyName,
+ 0 as CostPrice,
+ 0 as LunchPrice,
+ d.MisCode ,
+ ISNULL(m.TOstan , 'خراسان رضوی')  as MisCodeTitle,
+CASE WHEN d.MisCode= 1 THEN p2.MisPrice1 
+		 WHEN d.MisCode= 2 THEN p2.MisPrice2
+		 WHEN d.MisCode= 3 THEN p2.MisPrice3 
+		 WHEN d.MisCode= 4 THEN p2.MisPrice4 
+    END       AS PerPrice,
+	0 as City,
+	0 as State,
+	'باید مبدا و مقصد باشد' as MisPlace,
+	d.maxDistance as Distance
+from #DistanceTbl as d
+left join per.Employee as p
+on d.EmpIdRef = p.Id
+left join pcs.Users as us
+on us.EmpIdRef = d.EmpIdRef
+left join per.PerInfo as i
+on i.EmpIdRef = d.EmpIdRef
+left join per.Units as u
+on u.Id = i.UnitId
+LEFT JOIN per.PerInfo p2   ON d.EmpIdRef = p2.EmpIdRef 
+
+LEFT JOIN per.MissionRatePrice mrp 
+ON d.EmpIdRef=mrp.EmpIdRef 
+left join per.PerCompany as c
+on i.CompanyId = c.Id
+LEFT JOIN  #m as m 
+ON d.EmpIdRef=m.Srl_Pm_Ashkhas  AND d.FormDate COLLATE SQL_Latin1_General_CP1256_CI_AS = m.WorkFormTarikh COLLATE SQL_Latin1_General_CP1256_CI_AS
+
+order by d.FormDate
 
 
