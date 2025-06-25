@@ -1,12 +1,5 @@
-USE [Fanavaran221-TestAnsari]
-GO
-/****** Object:  StoredProcedure [dbo].[spMissionUserSel_Clean]    Script Date: 6/24/2025 8:53:32 AM ******/
-SET ANSI_NULLS ON
-GO
-SET QUOTED_IDENTIFIER ON
-GO
 
-ALTER procedure [per].[spMissionUserSel] @EmpIdRef INT,
+ALTER procedure [dbo].[spMissionUserSel_Clean] @EmpIdRef INT,
 @StartDate VARCHAR(10)='',
 @EndDate VARCHAR(10)=''  ,@CompanyId INT =-1 
 As
@@ -54,7 +47,7 @@ join  per.Pm_post as p
 on p.Srl = w.Srl_Pm_Post_To
 join  per.Pm_post as p2
 on p2.Srl = w.Srl_Pm_Post_From
-where  w.WorkFormTarikh between @fromDate and @toDate and (Srl_Pm_Ashkhas=@EmpIdRef OR @EmpIdRef=-1)
+where  w.WorkFormTarikh between @fromDate and @toDate and (Srl_Pm_Ashkhas=@EmpIdRef OR @EmpIdRef=-1) and d.Distance >= 50
 order by WorkFormTarikh
 
 -- بدست آوردن روزهایی که فرم کار پر کرده به همراه ماکس فاصله و مین ساعت شروع و تاریخ فردا و دیروز
@@ -75,10 +68,17 @@ order by WorkFormTarikh
         MAX(prjCode) AS prjCode,
         MAX(FromPost) AS FromPost,
         MAX(ToPost) AS ToPost,
-        MAX(MisCode) AS MisCode
+        MAX(MisCode) AS MisCode,
+		STRING_AGG(
+        'از : ' + FromPost COLLATE DATABASE_DEFAULT + 
+        ', به : ' + ISNULL(ToPost COLLATE DATABASE_DEFAULT, 'N/A') + 
+        ', مسافت: ' + CAST(ISNULL(Distance, 0) AS VARCHAR(max)), 
+        ' --- '
+    ) AS MisPlace
+
 
     FROM #myFormWork 
-    WHERE FormDate > @StartDate
+    WHERE FormDate >= @fromDate
     GROUP BY EmpIdRef, FormDate
 )
 
@@ -99,13 +99,16 @@ SELECT
     ToPost,
     0 AS IsMission,
     MisCode,
-    1.0 AS SumMission
+    1.0 AS SumMission,
+	MisPlace
 INTO #DistanceTbl
 FROM AggregatedData
 ORDER BY FormDate;
 
-update #DistanceTbl set IsMission = 1 where maxDistance >= 50
-delete from #DistanceTbl where MaxDistance <49
+select * from #DistanceTbl
+
+--update #DistanceTbl set IsMission = 1 where maxDistance >= 50
+--delete from #DistanceTbl where MaxDistance <49
 
 
 -- ایجاد جدول بدست امده برای روزهای بعداز فرم کار 
@@ -128,7 +131,7 @@ select
 	dt.MisCode , 
 
 case when dt.maxDistance>=@maxDistance and ad.ArrivedDate is not null and ad.ArrivedDate<> @toDate then 1 
-	when (dt.maxDistance>=140 and dt.maxDistance<@maxDistance and ad.ArrivedDate is not null and ad.ArrivedDate<> @toDate) then 0.5 else 0 end as TMission  into #TomorrowTbl
+	when (dt.maxDistance>=140 and dt.maxDistance<@maxDistance and ad.ArrivedDate is not null and ad.ArrivedDate<> @toDate) then 0.5 else 0 end as TMission , dt.MisPlace  into #TomorrowTbl
 from  #DistanceTbl as dt
 left join per.FormWorkArriveDetail as ad
 on ad.ArrivedDate=dt.Tomorrow and ad.EmpIdRef = dt.EmpIdRef
@@ -136,13 +139,13 @@ on ad.ArrivedDate=dt.Tomorrow and ad.EmpIdRef = dt.EmpIdRef
 delete from #TomorrowTbl where TMission <= 0
 
 
+
 select   dt.EmpIdRef ,  dt.maxDistance , (select per.CalcYesterdayShamsi(dt.YesterDay) ) as YesterDay , dt.YesterDay as FormDate   , dt.FormDate as Tomorrow  , dt.EndTimeMax , dt.STimeMin, dt.PostFrom , dt.PostTo, dt.Dsc , dt.PrjCode , dt.FromPost , dt.ToPost , 
-  dt.IsMission ,dt.MisCode   , 0.5 as YMission   into #YesterDayTbl
+  dt.IsMission ,dt.MisCode   , 0.5 as YMission , dt.MisPlace   into #YesterDayTbl
 from  #DistanceTbl as dt
 left join (select * from #DistanceTbl where maxDistance >=50) as dt2
 on dt.EmpIdRef = dt2.EmpIdRef and dt.YesterDay = dt2.FormDate
-where dt2.FormDate is null and  dt.STimeMin<=800 and dt.maxDistance>=140 and dt.FormDate > @StartDate
-
+where dt2.FormDate is null and  dt.STimeMin<=800 and dt.maxDistance>=140 and dt.FormDate >@StartDate --(select per.CalcTomorrowShamsi(@StartDate))
 
 
 
@@ -172,7 +175,8 @@ case when y.maxDistance > t.maxDistance then y.FromPost else t.FromPost end as F
 case when y.maxDistance > t.maxDistance then y.ToPost else t.ToPost end as ToPost,
 1 as IsMission,
 t.MisCode ,
-case when (t.TMission + y.YMission) >= 1 then 1 else (t.TMission + y.YMission) end as TMission
+case when (t.TMission + y.YMission) >= 1 then 1 else (t.TMission + y.YMission) end as TMission,
+case when (y.MaxDistance > t.MaxDistance) then y.MisPlace else t.MisPlace end as MisPlace
 into #integrateMPerDay
 from #YesterDayTbl as y
 left join #TomorrowTbl as t
@@ -198,9 +202,9 @@ delete from #TomorrowTbl where FormDate in (select FormDate from #integrateMPerD
 
 --الان باید دیتاهای هر سه جدول یعنی جدول دیروز و فردا و اشتراکات را داخل جدول اصلی مان اینسرت کنیم
 
-insert into #DistanceTbl (EmpIdRef , maxDistance , YesterDay , FormDate , Tomorrow , EndTimeMax , STimeMin , PostFrom , PostTo , Dsc , prjCode , FromPost , ToPost , IsMission , MisCode , SumMission ) select * from #integrateMPerDay
-insert into #DistanceTbl (EmpIdRef , maxDistance , YesterDay , FormDate , Tomorrow , EndTimeMax , STimeMin , PostFrom , PostTo , Dsc , prjCode , FromPost , ToPost , IsMission , MisCode , SumMission ) select * from #YesterDayTbl
-insert into #DistanceTbl (EmpIdRef , maxDistance , YesterDay , FormDate , Tomorrow , EndTimeMax , STimeMin , PostFrom , PostTo , Dsc , prjCode , FromPost , ToPost , IsMission , MisCode , SumMission ) select * from #TomorrowTbl
+insert into #DistanceTbl (EmpIdRef , maxDistance , YesterDay , FormDate , Tomorrow , EndTimeMax , STimeMin , PostFrom , PostTo , Dsc , prjCode , FromPost , ToPost , IsMission , MisCode , SumMission , MisPlace ) select * from #integrateMPerDay
+insert into #DistanceTbl (EmpIdRef , maxDistance , YesterDay , FormDate , Tomorrow , EndTimeMax , STimeMin , PostFrom , PostTo , Dsc , prjCode , FromPost , ToPost , IsMission , MisCode , SumMission  , MisPlace ) select * from #YesterDayTbl
+insert into #DistanceTbl (EmpIdRef , maxDistance , YesterDay , FormDate , Tomorrow , EndTimeMax , STimeMin , PostFrom , PostTo , Dsc , prjCode , FromPost , ToPost , IsMission , MisCode , SumMission  , MisPlace) select * from #TomorrowTbl
 
 
 
@@ -231,10 +235,10 @@ select
  p.Name , 
  p.Family,
  d.SumMission as MTime,
- d.prjCode ,
+d.prjCode  ,
  d.FormDate  as SDate,
  d.FormDate as EDate, 
- u.Id as UserId,
+ us.Id as UserId,
  '' as MTimeDesc,
  '' as Vehicle1Title ,
  '' as Vehicle2Title,
@@ -264,8 +268,9 @@ CASE WHEN d.MisCode= 1 THEN p2.MisPrice1
 		 WHEN d.MisCode= 4 THEN p2.MisPrice4 
     END       AS PerPrice,
 	0 as City,
-	0 as State,
-	'باید مبدا و مقصد باشد' as MisPlace,
+	0 as State,	
+	 d.MisPlace,
+	--'باید مبدا و مقصد باشد' as MisPlace,
 	d.maxDistance as Distance
 from #DistanceTbl as d
 left join per.Employee as p
@@ -277,7 +282,6 @@ on i.EmpIdRef = d.EmpIdRef
 left join per.Units as u
 on u.Id = i.UnitId
 LEFT JOIN per.PerInfo p2   ON d.EmpIdRef = p2.EmpIdRef 
-
 LEFT JOIN per.MissionRatePrice mrp 
 ON d.EmpIdRef=mrp.EmpIdRef 
 left join per.PerCompany as c
@@ -295,7 +299,7 @@ e.TfIdRef,
 e.Name,
 e.Family,
 M.MTime, 
-M.PrjCode, 
+ M.PrjCode , 
 M.SDate ,
 M.EDate ,
  M.Userid,
@@ -332,7 +336,6 @@ M.EDate ,
   cnt.City c3  ON c3.CId = m.[State]
 WHERE (e.Id=@EmpIdRef OR @EmpIdRef=-1)  AND (c.Id=@CompanyId OR @CompanyId=-1) and (m.SDate between @StartDate and @EndDate) 
 order by EmpIdRef , SDate 
-
 
 
 
