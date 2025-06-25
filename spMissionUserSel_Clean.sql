@@ -1,5 +1,4 @@
-
-ALTER procedure [dbo].[spMissionUserSel_Clean] @EmpIdRef INT,
+@EmpIdRef INT,
 @StartDate VARCHAR(10)='',
 @EndDate VARCHAR(10)=''  ,@CompanyId INT =-1 
 As
@@ -105,7 +104,7 @@ INTO #DistanceTbl
 FROM AggregatedData
 ORDER BY FormDate;
 
-select * from #DistanceTbl
+--select * from #DistanceTbl
 
 --update #DistanceTbl set IsMission = 1 where maxDistance >= 50
 --delete from #DistanceTbl where MaxDistance <49
@@ -288,7 +287,7 @@ left join per.PerCompany as c
 on i.CompanyId = c.Id
 LEFT JOIN  #m as m 
 ON d.EmpIdRef=m.Srl_Pm_Ashkhas  AND d.FormDate COLLATE SQL_Latin1_General_CP1256_CI_AS = m.WorkFormTarikh COLLATE SQL_Latin1_General_CP1256_CI_AS
-where p.Id is not null
+where p.Id is not null and d.FormDate >= @StartDate
 
 UNION ALL 
 
@@ -336,6 +335,5 @@ M.EDate ,
   cnt.City c3  ON c3.CId = m.[State]
 WHERE (e.Id=@EmpIdRef OR @EmpIdRef=-1)  AND (c.Id=@CompanyId OR @CompanyId=-1) and (m.SDate between @StartDate and @EndDate) 
 order by EmpIdRef , SDate 
-
 
 
